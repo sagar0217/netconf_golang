@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/Juniper/go-netconf/netconf"
 	xj "github.com/basgys/goxml2json"
@@ -25,8 +29,6 @@ func main() {
 }
 
 func addModule(w http.ResponseWriter, req *http.Request) {
-	fmt.Println("File Upload Endpoint Hit")
-
 	// Parse our multipart form, 10 << 20 specifies a maximum
 	// upload of 10 MB files.
 	req.ParseMultipartForm(10 << 20)
@@ -42,33 +44,30 @@ func addModule(w http.ResponseWriter, req *http.Request) {
 	defer file.Close()
 	fmt.Printf("Uploaded File: %+v\n", handler.Filename)
 
-	tempFile, err := ioutil.TempFile("./", handler.Filename)
+	dst, err := os.Create(handler.Filename)
+	defer dst.Close()
 	if err != nil {
-		fmt.Println(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	fmt.Println(tempFile.Name())
-	defer tempFile.Close()
 
-	// read all of the contents of our uploaded file into a
-	// byte array
-	fileBytes, err := ioutil.ReadAll(file)
+	// Copy the uploaded file to the created file on the filesystem
+	if _, err := io.Copy(dst, file); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	time.Sleep(time.Second)
+	command := "sysrepoctl -i " + handler.Filename
+	//command := "ls -lrth"
+	out, err := exec.Command("bash", "-c", command).Output()
+
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("Error: %s", err)
+	} else {
+		fmt.Println("Module stored successfully")
 	}
-	// write this byte array to our temporary file
-	tempFile.Write(fileBytes)
-	// return that we have successfully uploaded our file!
-	fmt.Fprintf(w, "Successfully Uploaded File\n")
-
-	// out, err := exec.Command("sysrepoctl", "-i", fileName).Output()
-
-	// if err != nil {
-	// 	fmt.Printf("%s", err)
-	// } else {
-	// 	fmt.Println("Module stored successfully")
-	// }
-	// output := string(out[:])
-	// fmt.Println(output)
+	output := string(out[:])
+	fmt.Println(output)
 }
 
 func getModule(w http.ResponseWriter, req *http.Request) {
@@ -86,9 +85,9 @@ func getModule(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	fmt.Println("r: ", r)
-	fmt.Println("\n\n\n\n")
-	fmt.Println("r.rawreply ", r.RawReply)
+	// fmt.Println("r: ", r)
+	// fmt.Println("\n\n\n\n")
+	// fmt.Println("r.rawreply ", r.RawReply)
 
 	data := ConvertToJSON(r.RawReply) // // s = "<xmlns>Hi</ns>" --> []byte --> "{\"foo\":{\"baz\": [1,2,3]}}"( 12 342 42 12 )
 
@@ -197,7 +196,7 @@ func ConvertToJSON(xmlstring string) []byte {
 	json, err := xj.Convert(xml)
 	if err != nil {
 		panic("That's embarrassing...")
-		return nil
+		//return nil
 	}
 
 	//	fmt.Println("#######", json.String())
